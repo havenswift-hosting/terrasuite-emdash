@@ -66,6 +66,19 @@ npm run seed                 # regenerate the seed, any number of properties
 node scripts/load-demo-stock.mjs 420   # or load straight into an existing database
 ```
 
+### Putting it behind a proxy
+
+Set `EMDASH_SITE_URL` to the browser-facing origin. Behind Apache, nginx or a
+tunnel the app only ever sees the internal request URL, so without it EmDash
+writes `http://127.0.0.1:4321/...` into the `src` and `srcset` of every image
+its own `<Image>` renders. The search results still look right, because the
+cards build their own URLs, so this shows up on property pages alone and is
+easy to miss.
+
+```sh
+EMDASH_SITE_URL=https://www.your-agency.com node ./dist/server/entry.mjs
+```
+
 Photographs are not in the seed. `scripts/load-demo-photos.mjs --from <folder>`
 puts a folder of JPEGs into the media library and hands them out by property
 type, which is how the demo site above is dressed.

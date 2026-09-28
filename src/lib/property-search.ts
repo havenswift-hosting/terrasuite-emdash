@@ -155,14 +155,71 @@ interface Raw {
 	pool: number;
 	new_build: number;
 	availability: string;
-	image_id: string | null;
-	image_key: string | null;
-	image_alt: string | null;
+	image_json: string | null;
 }
 
 /** A storage key is the URL after the media prefix, so nothing is looked up twice. */
 const mediaUrl = (key: string) =>
 	`/_emdash/api/media/file/${key.split("/").map(encodeURIComponent).join("/")}`;
+
+/**
+ * The photograph for a card.
+ *
+ * An image field is a TEXT column holding the JSON that EmDash's own image
+ * field defines - id, and optionally src, alt, width and height cached at the
+ * moment the editor picked it (see MediaValue in emdash/src/media/types.ts).
+ * It is NOT a bare media id, which is what an earlier version of this file
+ * joined on: that matched only rows written by our own demo loader, so a real
+ * agency picking a photograph in the admin got a placeholder panel instead.
+ *
+ * src is optional in that shape, so anything without one is looked up by id -
+ * once for the whole page, not once per card.
+ */
+interface Pic {
+	id: string;
+	src: string;
+	alt: string;
+}
+
+function pictures(rows: Raw[]): Map<string, Pic> {
+	const out = new Map<string, Pic>();
+	const lookup = new Map<string, { id: string; alt: string }>();
+
+	for (const r of rows) {
+		if (!r.image_json) continue;
+
+		let value: { id?: string; src?: string; alt?: string };
+		try {
+			value = JSON.parse(r.image_json);
+		} catch {
+			continue; // Not the documented shape; a card without a photograph.
+		}
+
+		if (!value?.id) continue;
+
+		const alt = value.alt || r.title;
+
+		if (value.src) out.set(r.id, { id: value.id, src: value.src, alt });
+		else lookup.set(value.id, { id: r.id, alt });
+	}
+
+	if (lookup.size) {
+		const ids = [...lookup.keys()];
+		const found = db()
+			.prepare(
+				`SELECT id, storage_key, alt FROM media WHERE id IN (${ids.map(() => "?").join(",")})`,
+			)
+			.all(...ids) as unknown as Array<{ id: string; storage_key: string; alt: string | null }>;
+
+		for (const m of found) {
+			const want = lookup.get(m.id);
+			if (!want || !m.storage_key) continue;
+			out.set(want.id, { id: m.id, src: mediaUrl(m.storage_key), alt: m.alt || want.alt });
+		}
+	}
+
+	return out;
+}
 
 export function search(c: Criteria): Result {
 	const { clause, args } = build(c);
@@ -184,15 +241,15 @@ export function search(c: Criteria): Result {
 		.prepare(
 			`SELECT p.id, p.slug, p.title, p.price, p.currency, p.beds, p.baths,
 			        p.built_area, p.town, p.property_type, p.dept, p.pool,
-			        p.new_build, p.availability,
-			        m.id AS image_id, m.storage_key AS image_key, m.alt AS image_alt
+			        p.new_build, p.availability, p.featured_image AS image_json
 			 FROM ec_properties p
-			 LEFT JOIN media m ON m.id = p.featured_image
 			 WHERE ${clause}
 			 ORDER BY ${order}
 			 LIMIT ? OFFSET ?`,
 		)
 		.all(...args, perPage, (page - 1) * perPage) as unknown as Raw[];
+
+	const pics = pictures(rows);
 
 	return {
 		rows: rows.map((r) => ({
@@ -210,9 +267,7 @@ export function search(c: Criteria): Result {
 			availability: r.availability,
 			pool: Boolean(r.pool),
 			new_build: Boolean(r.new_build),
-			image: r.image_id && r.image_key
-				? { id: r.image_id, src: mediaUrl(r.image_key), alt: r.image_alt || r.title }
-				: null,
+			image: pics.get(r.id) ?? null,
 		})),
 		total,
 		pages: Math.max(Math.ceil(total / perPage), 1),

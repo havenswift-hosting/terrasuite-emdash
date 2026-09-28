@@ -125,12 +125,32 @@ db.exec("COMMIT");
 // filename - mediterranean for outside, interiors for inside - so an apartment
 // gets a room and a villa gets a view, and a building plot gets neither.
 const library = db
-	.prepare("SELECT id, storage_key FROM media WHERE storage_key LIKE ? ORDER BY storage_key")
+	.prepare(
+		`SELECT id, storage_key, filename, mime_type, width, height, alt
+		 FROM media WHERE storage_key LIKE ? ORDER BY storage_key`,
+	)
 	.all(`${prefix}/%`);
 
-const ids = library.map((r) => r.id);
-const outside = library.filter((r) => /mediterranean/i.test(r.storage_key)).map((r) => r.id);
-const inside = library.filter((r) => /interiors/i.test(r.storage_key)).map((r) => r.id);
+// An image field is a TEXT column holding the JSON EmDash's own image field
+// defines, not a bare media id: id, and the src, alt and dimensions cached at
+// the moment an editor picked it (MediaValue, in emdash/src/media/types.ts).
+// Writing the id alone renders as <img src="01M3MY..."> on a property page and
+// matches nothing at all in code that expects the real shape.
+const value = (m) =>
+	JSON.stringify({
+		provider: "local",
+		id: m.id,
+		src: `/_emdash/api/media/file/${m.storage_key.split("/").map(encodeURIComponent).join("/")}`,
+		filename: m.filename,
+		mimeType: m.mime_type,
+		width: m.width,
+		height: m.height,
+		alt: m.alt || "Property photograph",
+	});
+
+const ids = library.map(value);
+const outside = library.filter((r) => /mediterranean/i.test(r.storage_key)).map(value);
+const inside = library.filter((r) => /interiors/i.test(r.storage_key)).map(value);
 const INSIDE_TYPES = ["apartment", "penthouse", "duplex", "townhouse"];
 const NO_PHOTOGRAPH = ["plot", "commercial"];
 
