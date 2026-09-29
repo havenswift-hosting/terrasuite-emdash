@@ -63,7 +63,10 @@ const year = new Date().getFullYear();
 
 		<header class="masthead">
 			<div class="wrap masthead__inner">
-				<a class="brand" href="/">{siteTitle.split(" ")[0]}<span>.</span></a>
+				{/* The whole name, not the first word of it: "Marina Costa Properties"
+				    is a likelier agency name than "TerraSuite", and taking the first
+				    word of it left "Marina." in the masthead. */}
+				<a class="brand" href="/">{siteTitle}<span>.</span></a>
 				<nav aria-label="Main">
 					{menu.data?.items?.length
 						? menu.data.items.map((item) => (

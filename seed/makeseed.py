@@ -156,7 +156,15 @@ seed = {
         'description': 'An estate agency content model, for measuring EmDash search',
         'author': 'Havenswift Hosting',
     },
-    'settings': {'title': 'TerraSuite on EmDash', 'tagline': 'A measurement, not a product'},
+    # A placeholder agency, not the product. The site title is what the masthead
+    # and the copyright line both read from, so calling it "TerraSuite on EmDash"
+    # gave "(c) 2026 TerraSuite on EmDash. Built with TerraSuite for EmDash." -
+    # the name twice in one sentence, and nothing like what an agency's own site
+    # would say. Anybody installing this replaces it in the admin panel.
+    'settings': {
+        'title': 'Marina Costa Properties',
+        'tagline': 'Property for sale and to let on the Costa Blanca',
+    },
     'collections': [
         {
             'slug': 'properties',
