@@ -6,14 +6,31 @@
 //
 // The pictures are the ones TerraSuite ships in its regional content packs:
 // Unsplash and Pexels licences, free for commercial use, no attribution
-// required. Point --from at a folder of JPEGs.
+// required.
+//
+// POINT --from AT A FOLDER OF PACKS, one sub-folder per subject:
+//
+//   homes/       the exterior of one dwelling, its terrace or its pool
+//   interiors/   a room
+//   towns/       a town, a street, a panorama
+//
+// The subject is what matters, not the region. A folder named for a region is
+// where the trouble starts: a pack called "mediterranean" holds villages,
+// harbours, restaurants and the Greek islands as well as houses, so a finca in
+// Benissa was illustrated with Santorini and a bungalow in Orba with a harbour
+// full of boats. Sorting by subject is the whole fix, and it has to be done by
+// eye - nothing in a filename can tell a villa from the village it stands in.
+//
+// A pack with no rule against its name is loaded into the media library and
+// left unused, which is what "towns" is for: an area page can have it later,
+// a property card never should.
 //
 // Two things happen per file: a row in media, and the file under the storage
 // directory at the key that row names. EmDash's local storage adapter maps a
 // storage key straight onto the URL after /_emdash/api/media/file/, so the key
 // is the path and nothing else has to agree.
 import { DatabaseSync } from "node:sqlite";
-import { readdirSync, readFileSync, mkdirSync, copyFileSync, existsSync } from "node:fs";
+import { readdirSync, readFileSync, mkdirSync, copyFileSync, existsSync, statSync } from "node:fs";
 import { join, basename, extname } from "node:path";
 
 const arg = (name, fallback) => {
@@ -25,6 +42,16 @@ const from = arg("from", "./demo-photos");
 const db = new DatabaseSync(arg("db", "./data.db"));
 const uploads = arg("uploads", "./uploads");
 const prefix = "demo";
+
+// Alt text per pack. The filenames are "home-003.jpg" and say nothing worth
+// reading aloud, and a screen reader announcing "a home 003 photograph" is
+// worse than a plain description. A real agency writes its own per photograph.
+const ALT = {
+	homes: "The outside of the property",
+	interiors: "A room inside the property",
+	towns: "The town the property is in",
+	misc: "Property photograph",
+};
 
 if (!existsSync(from)) {
 	console.error(`No such folder: ${from}`);
@@ -68,14 +95,42 @@ function dimensions(file) {
 	return null;
 }
 
-const files = readdirSync(from).filter((f) => /\.(jpe?g|png)$/i.test(f)).sort();
+// One sub-folder per pack. A loose file at the top level goes into a pack
+// called "misc", so pointing this at a flat folder still works and still says
+// what it did.
+// A pack called "rejected" is where curation puts what it threw out, so it is
+// a working folder rather than a pack. Loading it would put restaurants and
+// empty landscape into the agency's media library for somebody to pick by
+// accident. Anything starting with a dot or an underscore is skipped for the
+// same reason.
+const IGNORE = (name) => name === "rejected" || name.startsWith(".") || name.startsWith("_");
+
+const packs = new Map();
+
+for (const entry of readdirSync(from).sort()) {
+	const full = join(from, entry);
+
+	if (IGNORE(entry)) continue;
+
+	if (statSync(full).isDirectory()) {
+		const inside = readdirSync(full).filter((f) => /\.(jpe?g|png)$/i.test(f)).sort();
+		if (inside.length) packs.set(entry, inside.map((f) => join(entry, f)));
+	} else if (/\.(jpe?g|png)$/i.test(entry)) {
+		if (!packs.has("misc")) packs.set("misc", []);
+		packs.get("misc").push(entry);
+	}
+}
+
+const files = [...packs.values()].flat();
 
 if (!files.length) {
 	console.error(`No photographs in ${from}`);
 	process.exit(1);
 }
 
-mkdirSync(join(uploads, prefix), { recursive: true });
+for (const pack of packs.keys()) {
+	mkdirSync(join(uploads, prefix, pack), { recursive: true });
+}
 
 const insert = db.prepare(
 	`INSERT INTO media (id, filename, mime_type, size, width, height, alt, storage_key, status, created_at)
@@ -111,19 +166,16 @@ for (const file of files) {
 
 	copyFileSync(source, join(uploads, key));
 
-	const alt = basename(file, extname(file)).replace(/[-_]/g, " ")
-		.replace(/\d+$/, "").trim();
+	const pack = file.includes("/") ? file.split("/")[0] : "misc";
+	const alt = ALT[pack] || "Property photograph";
 
-	insert.run(ulid(), file, dim.mime, size, dim.width, dim.height,
-		alt ? `A ${alt} photograph` : "Property photograph", key, now);
+	insert.run(ulid(), basename(file), dim.mime, size, dim.width, dim.height,
+		alt, key, now);
 	added += 1;
 }
 
 db.exec("COMMIT");
 
-// Hand them out by what the property is. The packs name two families in the
-// filename - mediterranean for outside, interiors for inside - so an apartment
-// gets a room and a villa gets a view, and a building plot gets neither.
 const library = db
 	.prepare(
 		`SELECT id, storage_key, filename, mime_type, width, height, alt
@@ -148,11 +200,34 @@ const value = (m) =>
 		alt: m.alt || "Property photograph",
 	});
 
-const ids = library.map(value);
-const outside = library.filter((r) => /mediterranean/i.test(r.storage_key)).map(value);
-const inside = library.filter((r) => /interiors/i.test(r.storage_key)).map(value);
-const INSIDE_TYPES = ["apartment", "penthouse", "duplex", "townhouse"];
-const NO_PHOTOGRAPH = ["plot", "commercial"];
+// Which pack each kind of property draws from. A flat above a shop is sold on
+// its rooms and a villa on its outside, which is how an agency photographs
+// them. Land and commercial premises get nothing: a building plot with a
+// picture of somebody's house on it tells a reader the data is invented.
+const WANTS = {
+	apartment: "interiors",
+	penthouse: "interiors",
+	duplex: "interiors",
+	townhouse: "interiors",
+	studio: "interiors",
+	villa: "homes",
+	finca: "homes",
+	bungalow: "homes",
+	"country-house": "homes",
+	chalet: "homes",
+	plot: null,
+	commercial: null,
+	land: null,
+};
+const FALLBACK_PACK = "homes";
+
+const inPack = (name) =>
+	library.filter((r) => r.storage_key.startsWith(`${prefix}/${name}/`)).map(value);
+
+const pool = new Map();
+for (const name of new Set(Object.values(WANTS).filter(Boolean).concat(FALLBACK_PACK))) {
+	pool.set(name, inPack(name));
+}
 
 const properties = db
 	.prepare(
@@ -181,36 +256,50 @@ db.exec("BEGIN");
 
 let placed = 0;
 
+const unknown = new Set();
+
 for (const row of properties) {
-	if (NO_PHOTOGRAPH.includes(row.property_type)) {
+	const type = row.property_type;
+
+	if (type in WANTS && WANTS[type] === null) {
 		setImage.run(null, row.id);
 		continue;
 	}
 
-	const pool = INSIDE_TYPES.includes(row.property_type)
-		? (inside.length ? inside : ids)
-		: (outside.length ? outside : ids);
+	if (!(type in WANTS)) unknown.add(type);
 
-	setImage.run(pool[hash(row.id) % pool.length], row.id);
+	const want = WANTS[type] || FALLBACK_PACK;
+	const from = pool.get(want)?.length ? pool.get(want) : pool.get(FALLBACK_PACK);
+
+	if (!from?.length) continue;
+
+	setImage.run(from[hash(row.id) % from.length], row.id);
 	placed += 1;
 }
 
 db.exec("COMMIT");
 
 console.log(
-	`${ids.length} photographs (${outside.length} outside, ${inside.length} inside, `
-	+ `${added} new this run), on ${placed} of ${properties.length} properties `
-	+ `(${uploads}/${prefix}/)`,
+	`${library.length} photographs in ${pool.size} packs `
+	+ `(${[...pool].map(([n, p]) => `${n} ${p.length}`).join(", ")}; ${added} new this run), `
+	+ `on ${placed} of ${properties.length} properties (${uploads}/${prefix}/)`,
 );
 
-// A page of results shows twelve cards, so say plainly whether the library is
-// big enough for twelve different ones. Fewer photographs than cards guarantees
-// a repeat however they are dealt, and a demo that repeats looks like a bug.
-for (const [name, pool] of [["outside", outside], ["inside", inside]]) {
-	if (pool.length && pool.length < 12) {
+if (unknown.size) {
+	console.warn(
+		`no pack named for ${[...unknown].sort().join(", ")} - used ${FALLBACK_PACK}. `
+		+ `Add them to WANTS if that is wrong.`,
+	);
+}
+
+// A page of results shows twelve cards, so say plainly whether a pack is big
+// enough for twelve different ones. Fewer photographs than cards guarantees a
+// repeat however they are dealt, and a demo that repeats looks like a bug.
+for (const [name, p] of pool) {
+	if (p.length && p.length < 12) {
 		console.warn(
-			`only ${pool.length} ${name} photographs: a full page of results cannot `
-			+ `show twelve different ones. Point --from at a bigger folder.`,
+			`only ${p.length} in the ${name} pack: a full page of results cannot `
+			+ `show twelve different ones. Put more in it.`,
 		);
 	}
 }

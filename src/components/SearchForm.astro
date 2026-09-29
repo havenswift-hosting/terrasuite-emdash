@@ -39,7 +39,7 @@ const listBox = variant === "inline" ? { multiple: true, size: 4 } : {};
 		</select>
 	</label>
 
-	<label class="field">
+	<label class={`field ${variant === "inline" ? "field--wide" : ""}`}>
 		<span>Where</span>
 		<select name="town" {...listBox}>
 			{variant === "hero" && <option value="">Anywhere</option>}
@@ -51,7 +51,7 @@ const listBox = variant === "inline" ? { multiple: true, size: 4 } : {};
 		</select>
 	</label>
 
-	<label class="field">
+	<label class={`field ${variant === "inline" ? "field--wide" : ""}`}>
 		<span>Type</span>
 		<select name="type" {...listBox}>
 			{variant === "hero" && <option value="">Any type</option>}

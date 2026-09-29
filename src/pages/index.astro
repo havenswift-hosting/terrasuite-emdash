@@ -12,12 +12,24 @@ import { search, facets, stats } from "../lib/property-search";
 const { towns, types } = facets();
 const { total, towns: townCount } = stats();
 
+// Seven, not six: the newest one goes in the hero and the other six fill the
+// grid below it, so the same property is never shown twice on the page.
 const featured = search({
 	dept: "sale",
 	availability: "available",
 	orderBy: "newest",
-	perPage: 6,
+	perPage: 7,
 });
+
+const lead = featured.rows[0] ?? null;
+const rest = featured.rows.slice(1);
+
+const money = (p: { price: number | null; currency: string | null }) =>
+	new Intl.NumberFormat("en-GB", {
+		style: "currency",
+		currency: p.currency || "EUR",
+		maximumFractionDigits: 0,
+	}).format(p.price ?? 0);
 const byTown = towns.slice().sort((a, b) => b.count - a.count).slice(0, 12);
 
 const pretty = (s: string) =>
@@ -29,13 +41,34 @@ const pretty = (s: string) =>
 	description="Search every property on our books by price, size, location and the things that actually matter."
 >
 	<section class="hero">
-		<div class="wrap">
-			<h1>Find the one you are looking for.</h1>
-			<p>
-				{total.toLocaleString("en-GB")} properties across {townCount} towns, searchable by
-				everything that matters and nothing that does not.
-			</p>
-			<div style="margin-top:2rem">
+		<div class="wrap hero__inner">
+			<div class="hero__copy">
+				<h1>Find the one you are looking for.</h1>
+				<p>
+					{total.toLocaleString("en-GB")} properties across {townCount} towns, searchable by
+					everything that matters and nothing that does not.
+				</p>
+			</div>
+
+			{/* The newest thing on the books, beside the heading rather than a
+			    column of empty space. On a phone it moves below the search,
+			    because the search is what somebody came here to use. */}
+			{lead && (
+				<a class="hero__feature" href={`/property/${lead.slug}`}>
+					<span class="hero__feature-shot">
+						{lead.image
+							? <img src={lead.image.src} alt={lead.image.alt} width="640" height="480" decoding="async" />
+							: <span>{pretty(lead.property_type)}</span>}
+						<span class="hero__feature-flag">Just listed</span>
+					</span>
+					<span class="hero__feature-meta">
+						<strong>{money(lead)}</strong>
+						<span>{lead.title}</span>
+					</span>
+				</a>
+			)}
+
+			<div class="hero__search">
 				<SearchForm towns={towns} types={types} />
 			</div>
 		</div>
@@ -48,7 +81,7 @@ const pretty = (s: string) =>
 				<p><a href="/search?sort=newest">See everything just listed</a></p>
 			</div>
 			<ul class="grid">
-				{featured.rows.map((p) => <PropertyCard property={p} />)}
+				{rest.map((p) => <PropertyCard property={p} />)}
 			</ul>
 		</div>
 	</section>
